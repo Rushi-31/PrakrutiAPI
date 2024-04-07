@@ -1,36 +1,93 @@
-from flask import Flask, request, jsonify
+import re
 import pandas as pd
+
+from sklearn import preprocessing
+from sklearn.tree import DecisionTreeClassifier, _tree
 import numpy as np
-import pickle
+from sklearn.model_selection import train_test_split
+import csv
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# Load the dictionary mapping symptoms to their indices
-df = pd.read_csv('data.csv')
-symptoms_dict = {symptom: index for index, symptom in enumerate(df.columns[:-1])}
+training = pd.read_csv('Data/Training.csv')
 
-# Load the trained model from the .pkl file
-with open('model.pkl', 'rb') as model_file:
-    loaded_model = pickle.load(model_file)
+cols = training.columns[:-1]
 
-@app.route('/')
-def home():
-    return "Hello Nutesh"
+x = training[cols]
+y = training['prognosis']
+
+le = preprocessing.LabelEncoder()
+le.fit(y)
+y = le.transform(y)
+
+x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.33, random_state=42)
+
+clf = DecisionTreeClassifier()
+clf.fit(x_train, y_train)
+
+
+def getDescription():
+    description_list = {}
+    with open('MasterData/symptom_Description.csv') as csv_file:
+        csv_reader = csv.reader(csv_file, delimiter=',')
+        for row in csv_reader:
+            description_list[row[0]] = row[1]
+    return description_list
+
+
+def getPrecautionDict():
+    precautionDictionary = {}
+    with open('MasterData/symptom_precaution.csv') as csv_file:
+        csv_reader = csv.reader(csv_file, delimiter=',')
+        for row in csv_reader:
+            precautionDictionary[row[0]] = [row[1], row[2], row[3], row[4]]
+    return precautionDictionary
+
+
+description_list = getDescription()
+precautionDictionary = getPrecautionDict()
+
+
+def sec_predict(symptoms_exp):
+    df = pd.read_csv('Data/Training.csv')
+    X = df.iloc[:, :-1]
+    y = df['prognosis']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=20)
+    rf_clf = DecisionTreeClassifier()
+    rf_clf.fit(X_train, y_train)
+
+    symptoms_dict = {symptom: index for index, symptom in enumerate(X)}
+    input_vector = np.zeros(len(symptoms_dict))
+    for item in symptoms_exp:
+        input_vector[[symptoms_dict[item]]] = 1
+
+    return rf_clf.predict([input_vector])
+
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    # Get the symptom list from the request
-    symptoms_exp = request.json.get('symptoms')
+    symptoms = request.json['symptoms']
+    days = request.json['days']
 
-    # Create an input vector based on the provided symptoms
-    input_vector = np.zeros(len(symptoms_dict))
-    for symptom in symptoms_exp:
-        if symptom in symptoms_dict:
-            input_vector[symptoms_dict[symptom]] = 1
+    symptoms_exp = []
+    for symptom in symptoms:
+        if symptom in cols:
+            symptoms_exp.append(symptom)
 
-    # Make a prediction using the loaded model
-    prediction = loaded_model.predict([input_vector])[0]
+    second_prediction = sec_predict(symptoms_exp)
 
-    # Return the prediction as JSON response
-    return jsonify({'prediction': prediction})
+    present_disease = le.inverse_transform(clf.predict([np.isin(cols, symptoms_exp).astype(int)]))[0]
+    description = description_list.get(present_disease, "Description not available")
+    precautions = precautionDictionary.get(present_disease, ["Precautions not available"])
+
+    response = {
+        'predicted_disease': present_disease,
+        'description': description,
+        'precautions': precautions,
+        'second_prediction': second_prediction[0],
+    }
+
+    return jsonify(response)
+
 
