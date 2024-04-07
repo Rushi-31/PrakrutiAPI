@@ -64,7 +64,9 @@ def sec_predict(symptoms_exp):
 
     return rf_clf.predict([input_vector])
 
-
+@app.route('/')
+def home():
+    return "I am ready!"
 @app.route('/predict', methods=['POST'])
 def predict():
     symptoms = request.json['symptoms']
